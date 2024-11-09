@@ -31,11 +31,28 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def get_google_maps_link(location):
+    """Generate Google Maps link from coordinates or address"""
+    if location:
+        if ',' in location:  # Coordinates
+            return f"https://www.google.com/maps/search/?api=1&query={location}"
+        else:  # Address
+            encoded_address = urllib.parse.quote(location)
+            return f"https://www.google.com/maps/search/?api=1&query={encoded_address}"
+    return None
+
 def send_emergency_alert_to_admin(emergency_details, uploaded_files):
     """Send emergency details and images to admin chat"""
     try:
         base_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
         
+        # Generate Google Maps link
+        location_link = None
+        if emergency_details.get('current_location'):
+            location_link = get_google_maps_link(emergency_details['current_location'])
+        elif emergency_details.get('text_address'):
+            location_link = get_google_maps_link(emergency_details['text_address'])
+
         alert_message = (
             "🚨 NEW EMERGENCY ALERT 🚨\n\n"
             f"Type: {emergency_details['type']}\n"
@@ -44,9 +61,13 @@ def send_emergency_alert_to_admin(emergency_details, uploaded_files):
 
         if emergency_details.get('current_location'):
             alert_message += f"📍 Location: {emergency_details['current_location']}\n"
+            if location_link:
+                alert_message += f"📍 Maps Link: {location_link}\n"
         
         if emergency_details.get('text_address'):
             alert_message += f"🏠 Address: {emergency_details['text_address']}\n"
+            if location_link:
+                alert_message += f"📍 Maps Link: {location_link}\n"
 
         message_data = {
             "chat_id": ADMIN_CHAT_ID,
@@ -68,6 +89,18 @@ def send_emergency_alert_to_admin(emergency_details, uploaded_files):
     except Exception as e:
         logger.error(f"Failed to send emergency alert: {e}")
         return False
+
+def display_location_details(location_type, location_value):
+    """Display location details with Google Maps link"""
+    if location_value:
+        maps_link = get_google_maps_link(location_value)
+        st.markdown("### 📍 Location Details")
+        if location_type == "coordinates":
+            st.write(f"Coordinates: {location_value}")
+        else:
+            st.write(f"Address: {location_value}")
+        if maps_link:
+            st.markdown(f"[Open in Google Maps]({maps_link}) 🗺️")
 
 def custom_card(title, content=None, color="#FF4B4B"):
     st.markdown(
@@ -204,14 +237,23 @@ def main():
 
             if map_data["last_clicked"]:
                 latitude, longitude = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
-                st.session_state.current_location = f"{latitude}, {longitude}"
-                st.session_state.step = 'photos'
-                st.success(f"Location captured: {latitude}, {longitude}")
-                st.rerun()
+                location = f"{latitude}, {longitude}"
+                st.session_state.current_location = location
+                
+                # Display location details with Google Maps link
+                display_location_details("coordinates", location)
+                
+                if st.button("Confirm Location", use_container_width=True):
+                    st.session_state.step = 'photos'
+                    st.rerun()
 
         elif st.session_state.step == 'text_address':
             custom_card("Enter Your Address", color="#4CAF50")
             text_address = st.text_area("Complete Address")
+            if text_address:
+                # Display location details with Google Maps link
+                display_location_details("address", text_address)
+            
             if st.button("Continue", use_container_width=True):
                 if text_address:
                     st.session_state.text_address = text_address
@@ -227,6 +269,13 @@ def main():
                 type=["jpg", "jpeg", "png"],
                 accept_multiple_files=True
             )
+            
+            # Display current location details
+            if st.session_state.current_location:
+                display_location_details("coordinates", st.session_state.current_location)
+            elif st.session_state.text_address:
+                display_location_details("address", st.session_state.text_address)
+            
             if st.button("Send Emergency Alert", use_container_width=True):
                 st.session_state.photos = uploaded_files
                 st.session_state.step = 'summary'
@@ -259,6 +308,12 @@ def main():
             f"Estimated arrival time: {st.session_state.estimated_time} minutes",
             "#4CAF50"
         )
+
+        # Display location details in the status view
+        if st.session_state.current_location:
+            display_location_details("coordinates", st.session_state.current_location)
+        elif st.session_state.text_address:
+            display_location_details("address", st.session_state.text_address)
 
         custom_card(
             "📝 Important Instructions",
