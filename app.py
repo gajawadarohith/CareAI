@@ -2,29 +2,28 @@ import streamlit as st
 import os
 import logging
 from dotenv import load_dotenv
-import google.generativeai as genai
 import nltk
 import re
 from geopy.geocoders import Nominatim
-import webbrowser
 from PIL import Image
 import io
 import requests
 from datetime import datetime
 import urllib.parse
+import folium
+from streamlit_folium import st_folium
 
 # Download required NLTK data
-nltk.download('punkt')
-nltk.download('stopwords')
-nltk.download('averaged_perceptron_tagger')
-nltk.download('maxent_ne_chunker')
-nltk.download('words')
+nltk.download('punkt', quiet=True)
+nltk.download('stopwords', quiet=True)
+nltk.download('averaged_perceptron_tagger', quiet=True)
+nltk.download('maxent_ne_chunker', quiet=True)
+nltk.download('words', quiet=True)
 
 # Load environment variables
 load_dotenv()
 
 # Tokens and IDs
-GEMINI_API_TOKEN = os.getenv("GEMINI_API_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 
@@ -32,241 +31,258 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configure Gemini
-genai.configure(api_key=GEMINI_API_TOKEN)
-model = genai.GenerativeModel('gemini-pro')
-
-def get_gemini_response(question):
-    """Get response from Gemini model"""
-    try:
-        response = model.generate_content(question)
-        return response.text
-    except Exception as e:
-        logger.error(f"Failed to get Gemini response: {e}")
-        return "I apologize, but I'm having trouble processing your question. Please try again."
-
 def send_emergency_alert_to_admin(emergency_details, uploaded_files):
     """Send emergency details and images to admin chat"""
     try:
-        # Telegram API endpoint
         base_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
         
-        # Prepare emergency alert message
         alert_message = (
             "🚨 NEW EMERGENCY ALERT 🚨\n\n"
             f"Type: {emergency_details['type']}\n"
             f"Time: {emergency_details['time']}\n\n"
         )
 
-        if emergency_details.get('location'):
-            alert_message += f"📍 Location: {emergency_details['location']}\n"
-            if emergency_details.get('coordinates'):
-                alert_message += f"Coordinates: {emergency_details['coordinates']}\n"
+        if emergency_details.get('current_location'):
+            alert_message += f"📍 Location: {emergency_details['current_location']}\n"
         
-        if emergency_details.get('address'):
-            alert_message += f"🏠 Address: {emergency_details['address']}\n"
+        if emergency_details.get('text_address'):
+            alert_message += f"🏠 Address: {emergency_details['text_address']}\n"
 
-        # Send text message
-        message_url = f"{base_url}/sendMessage"
         message_data = {
             "chat_id": ADMIN_CHAT_ID,
             "text": alert_message,
             "parse_mode": "HTML"
         }
-        message_response = requests.post(message_url, json=message_data)
+        requests.post(f"{base_url}/sendMessage", json=message_data)
 
-        # Send location if coordinates are available
-        if emergency_details.get('coordinates'):
-            lat, lon = emergency_details['coordinates']
-            location_url = f"{base_url}/sendLocation"
-            location_data = {
-                "chat_id": ADMIN_CHAT_ID,
-                "latitude": lat,
-                "longitude": lon
-            }
-            location_response = requests.post(location_url, json=location_data)
-
-        # Send photos if any
         if uploaded_files:
-            photo_url = f"{base_url}/sendPhoto"
             for file in uploaded_files:
-                files = {
-                    "photo": file.getvalue()
-                }
+                files = {"photo": file.getvalue()}
                 photo_data = {
                     "chat_id": ADMIN_CHAT_ID,
                     "caption": "Emergency situation photo"
                 }
-                photo_response = requests.post(photo_url, data=photo_data, files=files)
+                requests.post(f"{base_url}/sendPhoto", data=photo_data, files=files)
 
         return True
     except Exception as e:
         logger.error(f"Failed to send emergency alert: {e}")
         return False
 
-# Initialize session state
-if 'step' not in st.session_state:
-    st.session_state.step = 'emergency_type'
-if 'emergency_type' not in st.session_state:
-    st.session_state.emergency_type = None
-if 'location_choice' not in st.session_state:
-    st.session_state.location_choice = None
-if 'location' not in st.session_state:
-    st.session_state.location = None
-if 'address' not in st.session_state:
-    st.session_state.address = None
-if 'photos' not in st.session_state:
-    st.session_state.photos = []
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
-if 'alert_sent' not in st.session_state:
-    st.session_state.alert_sent = False
+def custom_card(title, content=None, color="#FF4B4B"):
+    st.markdown(
+        f"""
+        <div style="
+            padding: 20px;
+            border-radius: 10px;
+            margin: 10px 0;
+            background-color: white;
+            border-left: 5px solid {color};
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <h3 style="color: {color}; margin-top: 0;">{title}</h3>
+            {f'<p style="margin-bottom: 0;">{content}</p>' if content else ''}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+def initialize_session_state():
+    """Initialize session state variables"""
+    if 'step' not in st.session_state:
+        st.session_state.step = 'platform_choice'
+    if 'platform' not in st.session_state:
+        st.session_state.platform = None
+    if 'emergency_type' not in st.session_state:
+        st.session_state.emergency_type = None
+    if 'current_location' not in st.session_state:
+        st.session_state.current_location = None
+    if 'text_address' not in st.session_state:
+        st.session_state.text_address = None
+    if 'location_choice' not in st.session_state:
+        st.session_state.location_choice = None
+    if 'photos' not in st.session_state:
+        st.session_state.photos = []
+    if 'alert_sent' not in st.session_state:
+        st.session_state.alert_sent = False
+    if 'emergency_status' not in st.session_state:
+        st.session_state.emergency_status = None
+
+def get_estimated_time():
+    """Return a random estimated arrival time between 5-15 minutes"""
+    from random import randint
+    return randint(5, 15)
 
 def main():
-    st.set_page_config(page_title="Emergency Assistance Bot", page_icon="🚑")
-    
-    # Title and description
-    st.title("🚑 Emergency Assistance Bot")
-    
-    # Platform choice
-    platform = st.radio(
-        "Choose how you'd like to continue:",
-        ("Continue in Streamlit", "Continue in Telegram")
+    st.set_page_config(
+        page_title="Emergency Assistance",
+        page_icon="🚑",
+        layout="centered",
+        initial_sidebar_state="collapsed"
     )
-    
-    if platform == "Continue in Telegram":
-        st.markdown("Click the button below to open Telegram:")
-        
-        # Method 1: Direct URL with error handling
-        bot_username = "EmergencyEagleBot"  # Replace with your actual bot username
-        telegram_url = f"https://t.me/{bot_username}"
-        
-        # Create a properly encoded URL
-        encoded_url = urllib.parse.quote(telegram_url, safe=':/')
-        
-        st.markdown(f"[Open Telegram Bot](https://t.me/{bot_username})")
-        
-        st.stop()
 
-    # Progress based on steps
-    if st.session_state.step == 'emergency_type':
-        st.markdown("### Please select the type of emergency:")
-        emergency_options = ["Medical Emergency", "Accident", "Heart/Chest Pain", "Pregnancy"]
-        selected_emergency = st.selectbox("Emergency Type", emergency_options)
-        
-        if st.button("Confirm Emergency Type"):
-            st.session_state.emergency_type = selected_emergency
-            st.session_state.step = 'location_choice'
-            st.rerun()
+    # Initialize session state
+    initialize_session_state()
 
-    elif st.session_state.step == 'location_choice':
-        st.markdown(f"### Selected Emergency: {st.session_state.emergency_type}")
-        st.markdown("### Would you like to share your location?")
-        location_choice = st.radio("Location sharing", ("Yes", "No"))
-        
-        if st.button("Confirm Location Choice"):
-            st.session_state.location_choice = location_choice
-            st.session_state.step = 'location_input'
-            st.rerun()
+    # Custom CSS
+    st.markdown("""
+        <style>
+        .main {
+            padding: 2rem;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        .stButton button {
+            width: 100%;
+            border-radius: 20px;
+            height: 3em;
+            font-weight: 600;
+        }
+        .emergency-title {
+            color: #FF4B4B;
+            text-align: center;
+            margin-bottom: 2em;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
-    elif st.session_state.step == 'location_input':
-        if st.session_state.location_choice == "Yes":
-            st.markdown("### Please enter your coordinates:")
+    if not st.session_state.alert_sent:
+        st.markdown('<h1 class="emergency-title">🚑 Emergency Assistance</h1>', unsafe_allow_html=True)
+
+        if st.session_state.step == 'platform_choice':
+            custom_card("Choose how you'd like to continue", color="#1E88E5")
             col1, col2 = st.columns(2)
             with col1:
-                latitude = st.number_input("Latitude", -90.0, 90.0, 0.0)
+                if st.button("Continue Here", use_container_width=True):
+                    st.session_state.platform = "streamlit"
+                    st.session_state.step = 'emergency_type'
+                    st.rerun()
             with col2:
-                longitude = st.number_input("Longitude", -180.0, 180.0, 0.0)
+                if st.button("Open in Telegram", use_container_width=True):
+                    bot_username = "EmergencyEagleBot"
+                    telegram_url = f"https://t.me/{bot_username}"
+                    st.markdown(f"[Open Telegram Bot]({telegram_url})")
+                    st.stop()
+
+        elif st.session_state.step == 'emergency_type':
+            custom_card("Select Emergency Type", color="#FF4B4B")
+            emergency_options = {
+                "Medical Emergency": "🏥",
+                "Accident": "🚗",
+                "Heart/Chest Pain": "❤️",
+                "Pregnancy": "👶"
+            }
             
-            if st.button("Submit Location"):
-                st.session_state.location = (latitude, longitude)
-                geolocator = Nominatim(user_agent="Emergency Bot")
-                try:
-                    location = geolocator.reverse(f"{latitude}, {longitude}")
-                    st.session_state.address = location.address
-                    st.success(f"Location received: {location.address}")
-                    st.session_state.step = 'photos'
+            cols = st.columns(2)
+            for i, (option, emoji) in enumerate(emergency_options.items()):
+                with cols[i % 2]:
+                    if st.button(f"{emoji} {option}", use_container_width=True):
+                        st.session_state.emergency_type = option
+                        st.session_state.step = 'location_choice'
+                        st.rerun()
+
+        elif st.session_state.step == 'location_choice':
+            custom_card("Share Your Location", color="#4CAF50")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("📍 Share Location", use_container_width=True):
+                    st.session_state.location_choice = "location"
+                    st.session_state.step = 'current_location'
                     st.rerun()
-                except:
-                    st.error("Could not retrieve address from coordinates. Please provide additional details.")
-                    st.session_state.step = 'address'
+                
+            with col2:
+                if st.button("✍️ Enter Address", use_container_width=True):
+                    st.session_state.location_choice = "address"
+                    st.session_state.step = 'text_address'
                     st.rerun()
-        else:
-            st.session_state.step = 'address'
-            st.rerun()
 
-    elif st.session_state.step == 'address':
-        st.markdown("### Please provide your address:")
-        address = st.text_area("Enter your complete address")
-        
-        if st.button("Submit Address"):
-            st.session_state.address = address
-            st.session_state.step = 'photos'
-            st.rerun()
+        elif st.session_state.step == 'current_location':
+            custom_card("Select Your Location on the Map", color="#4CAF50")
+            # Display the map with a folium map to select location
+            map_center = [20.5937, 78.9629]  # Example center location
+            m = folium.Map(location=map_center, zoom_start=5)
+            map_data = st_folium(m, width=700, height=500)
 
-    elif st.session_state.step == 'photos':
-        st.markdown("### Would you like to upload photos of the emergency situation?")
-        uploaded_files = st.file_uploader("Choose photos", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
-        
-        if st.button("Continue"):
-            if uploaded_files:
-                st.session_state.photos = uploaded_files
-            st.session_state.step = 'summary'
-            st.rerun()
-
-    elif st.session_state.step == 'summary':
-        st.markdown("### Emergency Details Summary:")
-        st.write(f"Emergency Type: {st.session_state.emergency_type}")
-        
-        emergency_details = {
-            'type': st.session_state.emergency_type,
-            'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        
-        if st.session_state.location:
-            st.write(f"Location: {st.session_state.address}")
-            st.write(f"Coordinates: {st.session_state.location}")
-            emergency_details['location'] = st.session_state.address
-            emergency_details['coordinates'] = st.session_state.location
-        else:
-            st.write(f"Address: {st.session_state.address}")
-            emergency_details['address'] = st.session_state.address
-        
-        if st.session_state.photos:
-            st.write(f"Number of photos uploaded: {len(st.session_state.photos)}")
-        
-        if not st.session_state.alert_sent:
-            if st.button("Confirm and Send Emergency Alert"):
-                with st.spinner("Sending emergency alert..."):
-                    if send_emergency_alert_to_admin(emergency_details, st.session_state.photos):
-                        st.session_state.alert_sent = True
-                        st.success("Emergency alert sent! Please stay calm and wait for assistance.")
-                        st.markdown("""
-                        🚑 An ambulance has been dispatched to your location.
-                        ⚠ Please stay calm and don't move the patient unless absolutely necessary.
-                        👨‍⚕ Keep monitoring the patient's condition.
-                        """)
-                        st.session_state.step = 'chat'
-                    else:
-                        st.error("Failed to send emergency alert. Please try again.")
+            if map_data["last_clicked"]:
+                latitude, longitude = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
+                st.session_state.current_location = f"{latitude}, {longitude}"
+                st.session_state.step = 'photos'
+                st.success(f"Location captured: {latitude}, {longitude}")
                 st.rerun()
 
-    # Chat interface (available at all steps after emergency type selection)
-    if st.session_state.step != 'emergency_type':
-        st.markdown("### Need immediate medical advice?")
-        user_question = st.text_input("Type your medical emergency question here:")
+        elif st.session_state.step == 'text_address':
+            custom_card("Enter Your Address", color="#4CAF50")
+            text_address = st.text_area("Complete Address")
+            if st.button("Continue", use_container_width=True):
+                if text_address:
+                    st.session_state.text_address = text_address
+                    st.session_state.step = 'photos'
+                    st.rerun()
+                else:
+                    st.error("Please enter your address")
+
+        elif st.session_state.step == 'photos':
+            custom_card("Upload Photos (Optional)", color="#9C27B0")
+            uploaded_files = st.file_uploader(
+                "Upload photos of the emergency situation",
+                type=["jpg", "jpeg", "png"],
+                accept_multiple_files=True
+            )
+            if st.button("Send Emergency Alert", use_container_width=True):
+                st.session_state.photos = uploaded_files
+                st.session_state.step = 'summary'
+                st.rerun()
+
+        elif st.session_state.step == 'summary':
+            emergency_details = {
+                'type': st.session_state.emergency_type,
+                'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'current_location': st.session_state.current_location,
+                'text_address': st.session_state.text_address
+            }
+
+            with st.spinner("Dispatching Emergency Services..."):
+                if send_emergency_alert_to_admin(emergency_details, st.session_state.photos):
+                    st.session_state.alert_sent = True
+                    st.session_state.emergency_status = "en_route"
+                    estimated_time = get_estimated_time()
+                    st.session_state.estimated_time = estimated_time
+                    st.rerun()
+                else:
+                    st.error("Failed to send alert. Please try again.")
+
+    else:
+        # Emergency services dispatched view
+        st.markdown('<h1 class="emergency-title">Emergency Services En Route</h1>', unsafe_allow_html=True)
         
-        if user_question:
-            response = get_gemini_response(user_question)
-            st.session_state.chat_history.append(("user", user_question))
-            st.session_state.chat_history.append(("bot", response))
-        
-        # Display chat history
-        for role, message in st.session_state.chat_history:
-            if role == "user":
-                st.write(f"You: {message}")
-            else:
-                st.write(f"Bot: {message}")
+        custom_card(
+            "🚑 Help is on the way!",
+            f"Estimated arrival time: {st.session_state.estimated_time} minutes",
+            "#4CAF50"
+        )
+
+        custom_card(
+            "📝 Important Instructions",
+            """
+            • Stay calm and remain in your current location
+            • Keep your phone nearby
+            • Gather any relevant medical documents
+            • Clear the path for emergency responders
+            • If possible, have someone wait outside to guide the team
+            """,
+            "#1E88E5"
+        )
+
+        custom_card(
+            "🆘 Emergency Contact",
+            "If your condition worsens or you need immediate assistance, call 911",
+            "#FF4B4B"
+        )
+
+        # Reset button (bottom of page)
+        if st.button("Start New Emergency Request", use_container_width=True):
+            for key in st.session_state.keys():
+                del st.session_state[key]
+            st.rerun()
 
 if __name__ == "__main__":
     main()
