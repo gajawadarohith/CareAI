@@ -1,0 +1,8 @@
+os
+logging
+python-dotenv
+python-telegram-bot
+google-generative-ai
+functools32  
+nltk
+geopy
