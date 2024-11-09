@@ -36,11 +36,20 @@ logger = logging.getLogger(__name__)
 genai.configure(api_key=GEMINI_API_TOKEN)
 model = genai.GenerativeModel('gemini-pro')
 
+def get_gemini_response(question):
+    """Get response from Gemini model"""
+    try:
+        response = model.generate_content(question)
+        return response.text
+    except Exception as e:
+        logger.error(f"Failed to get Gemini response: {e}")
+        return "I apologize, but I'm having trouble processing your question. Please try again."
+
 def send_emergency_alert_to_admin(emergency_details, uploaded_files):
     """Send emergency details and images to admin chat"""
     try:
         # Telegram API endpoint
-        base_url = f"https://t.me/EmergencyEagleBot"
+        base_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
         
         # Prepare emergency alert message
         alert_message = (
@@ -134,24 +143,22 @@ def main():
         
         # Create a properly encoded URL
         encoded_url = urllib.parse.quote(telegram_url, safe=':/')
-        col1, col2 = st.columns(2)
         
-        with col1:
-            if st.button("Open Telegram (Direct)"):
-                try:
-                    # Try direct URL opening
-                    js_code = f"""
-                    <script>
-                        window.open('{encoded_url}', '_blank');
-                    </script>
-                    """
-                    st.components.v1.html(js_code, height=0)
-                except Exception as e:
-                    st.error(f"Failed to open Telegram: {str(e)}")
+        if st.button("Open Telegram (Direct)"):
+            try:
+                # Try direct URL opening
+                js_code = f"""
+                <script>
+                    window.open('{encoded_url}', '_blank');
+                </script>
+                """
+                st.components.v1.html(js_code, height=0)
+            except Exception as e:
+                st.error(f"Failed to open Telegram: {str(e)}")
         
-        with col2:
-            # Method 2: Markdown link as backup
-            st.markdown(f"[Open Telegram Bot](https://t.me/{bot_username})")
+        # Method 2: Markdown link as backup
+        st.markdown(f"[Open Telegram Bot](https://t.me/{bot_username})")
+        
         st.stop()
 
     # Progress based on steps
