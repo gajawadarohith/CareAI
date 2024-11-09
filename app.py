@@ -31,44 +31,63 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def get_google_maps_link(location):
-    """Generate Google Maps link from coordinates or address"""
-    if location:
-        if ',' in location:  # Coordinates
-            return f"https://www.google.com/maps/search/?api=1&query={location}"
-        else:  # Address
-            encoded_address = urllib.parse.quote(location)
-            return f"https://www.google.com/maps/search/?api=1&query={encoded_address}"
-    return None
 
 def send_emergency_alert_to_admin(emergency_details, uploaded_files):
     """Send emergency details and images to admin chat"""
     try:
         base_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
         
-        # Generate Google Maps link
-        location_link = None
-        if emergency_details.get('current_location'):
-            location_link = get_google_maps_link(emergency_details['current_location'])
-        elif emergency_details.get('text_address'):
-            location_link = get_google_maps_link(emergency_details['text_address'])
-
         alert_message = (
             "🚨 NEW EMERGENCY ALERT 🚨\n\n"
             f"Type: {emergency_details['type']}\n"
             f"Time: {emergency_details['time']}\n\n"
         )
 
+        # Handle location information
         if emergency_details.get('current_location'):
-            alert_message += f"📍 Location: {emergency_details['current_location']}\n"
-            if location_link:
-                alert_message += f"📍 Maps Link: {location_link}\n"
-        
-        if emergency_details.get('text_address'):
-            alert_message += f"🏠 Address: {emergency_details['text_address']}\n"
-            if location_link:
-                alert_message += f"📍 Maps Link: {location_link}\n"
+            try:
+                # Parse location string to get coordinates
+                if isinstance(emergency_details['current_location'], str):
+                    lat, lon = map(float, emergency_details['current_location'].split(','))
+                else:
+                    lat = emergency_details['current_location'].get('latitude')
+                    lon = emergency_details['current_location'].get('longitude')
 
+                # Create Google Maps link
+                maps_link = f"https://www.google.com/maps?q={lat},{lon}"
+                
+                # Add location information to message
+                alert_message += (
+                    f"📍 Location Coordinates: {lat}, {lon}\n"
+                    f"🗺️ Google Maps: {maps_link}\n"
+                )
+
+                # Try to get address from coordinates using Nominatim
+                try:
+                    geolocator = Nominatim(user_agent="emergency_app")
+                    location = geolocator.reverse(f"{lat}, {lon}")
+                    if location and location.address:
+                        alert_message += f"📌 Reverse Geocoded Address: {location.address}\n"
+                except Exception as geo_error:
+                    logger.error(f"Geocoding error: {geo_error}")
+                    
+            except Exception as loc_error:
+                logger.error(f"Location parsing error: {loc_error}")
+                alert_message += f"📍 Location (raw): {emergency_details['current_location']}\n"
+
+        if emergency_details.get('text_address'):
+            alert_message += f"🏠 Provided Address: {emergency_details['text_address']}\n"
+            # Try to get coordinates for the text address
+            try:
+                geolocator = Nominatim(user_agent="emergency_app")
+                location = geolocator.geocode(emergency_details['text_address'])
+                if location:
+                    maps_link = f"https://www.google.com/maps?q={location.latitude},{location.longitude}"
+                    alert_message += f"🗺️ Address Google Maps: {maps_link}\n"
+            except Exception as geo_error:
+                logger.error(f"Address geocoding error: {geo_error}")
+
+        # Send text message
         message_data = {
             "chat_id": ADMIN_CHAT_ID,
             "text": alert_message,
@@ -76,6 +95,7 @@ def send_emergency_alert_to_admin(emergency_details, uploaded_files):
         }
         requests.post(f"{base_url}/sendMessage", json=message_data)
 
+        # Send photos if any
         if uploaded_files:
             for file in uploaded_files:
                 files = {"photo": file.getvalue()}
@@ -90,18 +110,6 @@ def send_emergency_alert_to_admin(emergency_details, uploaded_files):
         logger.error(f"Failed to send emergency alert: {e}")
         return False
 
-def display_location_details(location_type, location_value):
-    """Display location details with Google Maps link"""
-    if location_value:
-        maps_link = get_google_maps_link(location_value)
-        st.markdown("### 📍 Location Details")
-        if location_type == "coordinates":
-            st.write(f"Coordinates: {location_value}")
-        else:
-            st.write(f"Address: {location_value}")
-        if maps_link:
-            st.markdown(f"[Open in Google Maps]({maps_link}) 🗺️")
-
 def custom_card(title, content=None, color="#FF4B4B"):
     st.markdown(
         f"""
@@ -113,7 +121,7 @@ def custom_card(title, content=None, color="#FF4B4B"):
             border-left: 5px solid {color};
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
             <h3 style="color: {color}; margin-top: 0;">{title}</h3>
-            {f'<p style="margin-bottom: 0;">{content}</p>' if content else ''}
+            {f'<p style="color: #000000; margin-bottom: 0;">{content}</p>' if content else ''}
         </div>
         """,
         unsafe_allow_html=True
@@ -237,23 +245,14 @@ def main():
 
             if map_data["last_clicked"]:
                 latitude, longitude = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
-                location = f"{latitude}, {longitude}"
-                st.session_state.current_location = location
-                
-                # Display location details with Google Maps link
-                display_location_details("coordinates", location)
-                
-                if st.button("Confirm Location", use_container_width=True):
-                    st.session_state.step = 'photos'
-                    st.rerun()
+                st.session_state.current_location = {"latitude": latitude, "longitude": longitude}
+                st.session_state.step = 'photos'
+                st.success(f"Location captured: {latitude}, {longitude}")
+                st.rerun()
 
         elif st.session_state.step == 'text_address':
             custom_card("Enter Your Address", color="#4CAF50")
             text_address = st.text_area("Complete Address")
-            if text_address:
-                # Display location details with Google Maps link
-                display_location_details("address", text_address)
-            
             if st.button("Continue", use_container_width=True):
                 if text_address:
                     st.session_state.text_address = text_address
@@ -269,13 +268,6 @@ def main():
                 type=["jpg", "jpeg", "png"],
                 accept_multiple_files=True
             )
-            
-            # Display current location details
-            if st.session_state.current_location:
-                display_location_details("coordinates", st.session_state.current_location)
-            elif st.session_state.text_address:
-                display_location_details("address", st.session_state.text_address)
-            
             if st.button("Send Emergency Alert", use_container_width=True):
                 st.session_state.photos = uploaded_files
                 st.session_state.step = 'summary'
@@ -308,12 +300,6 @@ def main():
             f"Estimated arrival time: {st.session_state.estimated_time} minutes",
             "#4CAF50"
         )
-
-        # Display location details in the status view
-        if st.session_state.current_location:
-            display_location_details("coordinates", st.session_state.current_location)
-        elif st.session_state.text_address:
-            display_location_details("address", st.session_state.text_address)
 
         custom_card(
             "📝 Important Instructions",
