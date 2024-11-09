@@ -39,7 +39,7 @@ def send_emergency_alert_to_admin(emergency_details, uploaded_files):
     """Send emergency details and images to admin chat"""
     try:
         # Telegram API endpoint
-        base_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+        base_url = f"https://t.me/EmergencyEagleBot"
         
         # Prepare emergency alert message
         alert_message = (
