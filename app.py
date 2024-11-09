@@ -126,8 +126,13 @@ def main():
     
     if platform == "Continue in Telegram":
         st.markdown("Click the button below to open Telegram:")
-        if st.button("Open Telegram Bot"):
-            webbrowser.open("https://t.me/EmergencyEagleBot")
+        
+        # Method 1: Direct URL with error handling
+        bot_username = "EmergencyEagleBot"  # Replace with your actual bot username
+        telegram_url = f"https://t.me/{bot_username}"
+        
+        # Create a properly encoded URL
+        encoded_url = urllib.parse.quote(telegram_url, safe=':/')
         st.stop()
 
     # Progress based on steps
