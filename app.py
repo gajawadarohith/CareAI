@@ -144,19 +144,6 @@ def main():
         # Create a properly encoded URL
         encoded_url = urllib.parse.quote(telegram_url, safe=':/')
         
-        if st.button("Open Telegram (Direct)"):
-            try:
-                # Try direct URL opening
-                js_code = f"""
-                <script>
-                    window.open('{encoded_url}', '_blank');
-                </script>
-                """
-                st.components.v1.html(js_code, height=0)
-            except Exception as e:
-                st.error(f"Failed to open Telegram: {str(e)}")
-        
-        # Method 2: Markdown link as backup
         st.markdown(f"[Open Telegram Bot](https://t.me/{bot_username})")
         
         st.stop()
