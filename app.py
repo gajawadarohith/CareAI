@@ -11,6 +11,7 @@ from PIL import Image
 import io
 import requests
 from datetime import datetime
+import urllib.parse
 
 # Download required NLTK data
 nltk.download('punkt')
